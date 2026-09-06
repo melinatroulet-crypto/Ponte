@@ -347,9 +347,19 @@ function unlockSpeech(){
   speechSynthesis.speak(u);
 }
 
+let wakeLock = null;
+async function requestWakeLock(){
+  try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); }
+  catch(e) { console.error('Ponte — wake lock indisponível:', e); }
+}
+function releaseWakeLock(){
+  if (wakeLock) { try { wakeLock.release(); } catch(e){} wakeLock = null; }
+}
+
 btnGoScreen2.addEventListener('click', () => {
   if (!apiKey){ keySetup.scrollIntoView({behavior:'smooth', block:'center'}); return; }
   unlockSpeech();
+  requestWakeLock();
   showScreen(2);
 
   const isProfessora = appMode === 'professora';
@@ -371,8 +381,29 @@ btnGoScreen2.addEventListener('click', () => {
   updateMeetingButtons();
   setOrbState('pink-idle', 'Pronta');
 });
-btnBack.addEventListener('click', () => { stopAllListening(); showScreen(1); });
+btnBack.addEventListener('click', () => { stopAllListening(); releaseWakeLock(); showScreen(1); });
 btnBack3.addEventListener('click', () => showScreen(1));
+
+/* Quando o iOS suspende a página (tela apaga, troca de app) e ela volta,
+   os estados internos podem ficar travados. Ao reaparecer, destravamos tudo
+   e retomamos a escuta se ela deveria estar ativa. */
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (!screen2.classList.contains('visible')) return;
+  if (busy || listeningForCommand) {
+    busy = false; listeningForCommand = false;
+    askText.disabled = false; btnAskSend.disabled = false;
+    btnAsk.textContent = appMode==='professora' ? '🎤 Falar com a professora' : '🎤 Perguntar à Ponte';
+    btnAsk.classList.remove('on');
+    showNotice('A Ponte foi interrompida (tela apagou ou app trocou) e se recuperou. Pode continuar.');
+  }
+  if (meetingMode) {
+    hardStopMeetingRecognizer();
+    const [s,l] = restingState(); setOrbState(s,l);
+    startMeetingRecognizer();
+  }
+  requestWakeLock();
+});
 btnGoHistoryFrom1.addEventListener('click', () => { renderHistory(); showScreen(3); });
 btnGoHistoryFrom2.addEventListener('click', () => { renderHistory(); showScreen(3); });
 
