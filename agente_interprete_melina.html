@@ -324,6 +324,13 @@ function topicsAsText(){
   if (!all.length) return '';
   return all.map(t => `## ${t.title}\n` + t.points.map(p => '- ' + p).join('\n')).join('\n\n');
 }
+async function ensurePortuguese(text){
+  if (!text || !text.trim()) return text;
+  try {
+    const prompt = `O texto abaixo deveria estar inteiramente em português, mas pode conter trechos em outro idioma por engano. Reescreva TUDO em português, mantendo exatamente a mesma estrutura (títulos de assunto, pontos em lista) e o mesmo nível de detalhe — apenas traduza qualquer parte que não esteja em português. Não resuma, não corte nada, não adicione comentários.\n\nTexto:\n"""${text}"""\n\nResponda APENAS com o texto revisado, sem nenhum comentário adicional.`;
+    return await callClaude(prompt, {maxTokens: 8000});
+  } catch(e){ console.error('Ponte — erro ao normalizar idioma:', e); return text; }
+}
 const notesList = document.getElementById('notesList');
 const chatLog = document.getElementById('chatLog');
 const btnFinalizar = document.getElementById('btnFinalizar');
@@ -814,10 +821,12 @@ btnFinalizar.addEventListener('click', async () => {
   btnFinalizar.disabled = true;
   btnFinalizar.textContent = '✓ Finalizando…';
   stopMeetingMode();
-  setOrbState('yellow', 'Preparando resumo final…');
+  setOrbState('yellow', 'Revisando anotações…');
   try {
     const context = conversationContext(80);
-    const topics = topicsAsText();
+    let topics = topicsAsText();
+    if (topics) topics = await ensurePortuguese(topics);
+    setOrbState('yellow', 'Preparando resumo final…');
     const prompt = isTraducao
       ? `Você é Ponte, tradutora simultânea de Melina. A sessão de tradução terminou. Com base no histórico abaixo, escreva um resumo bem estruturado em português dos principais pontos e aprendizados do que foi traduzido — não é uma ata de reunião de negócios, é um resumo de conteúdo (aula, palestra, sermão, etc.).\n\n${context || '(sem conteúdo registrado)'}${notesContext()}`
       : topics
