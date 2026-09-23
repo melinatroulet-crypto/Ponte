@@ -128,6 +128,9 @@
   .notes-panel{margin-top:16px; padding:12px 14px 8px; background:rgba(201,154,91,0.06); border:1px solid var(--line); border-radius:12px;}
   .notes-title{font-family:'Newsreader', serif; font-style:italic; font-size:0.86rem; color:var(--gold); margin:0 0 6px;}
   .note-item{font-size:0.82rem; color:var(--cream); line-height:1.5; margin-bottom:6px;}
+  .topic-block{margin-bottom:12px;}
+  .topic-block .tt{font-family:'Newsreader', serif; font-style:italic; font-size:0.92rem; color:var(--gold); margin:0 0 4px;}
+  .topic-block .tp{font-size:0.8rem; color:var(--cream); line-height:1.5; margin:0 0 3px; padding-left:12px;}
 
   #btnFinalizar{margin-top:16px; background:transparent; border:1px solid var(--line); color:var(--muted);}
   .wrapup{margin-top:16px; padding:16px; background:rgba(132,169,140,0.08); border:1px solid rgba(132,169,140,0.3); border-radius:14px; text-align:center;}
@@ -146,6 +149,14 @@
   .h-icons button{flex:1; padding:8px 4px; font-size:0.72rem; border-radius:10px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;}
   .h-icons button:hover{border-color:var(--gold); color:var(--gold);}
   .h-agenda{margin-top:10px; font-size:0.8rem; color:var(--cream); background:rgba(201,154,91,0.06); border-radius:10px; padding:8px 10px;}
+  .h-chat{margin-top:10px; display:flex; flex-direction:column; gap:8px;}
+  .h-chat-log{display:flex; flex-direction:column; gap:6px; max-height:220px; overflow-y:auto;}
+  .h-chat-log .hm{font-size:0.8rem; padding:8px 10px; border-radius:10px; line-height:1.45; max-width:88%;}
+  .h-chat-log .hm.you{align-self:flex-end; background:rgba(201,154,91,0.14); border:1px solid rgba(201,154,91,0.3);}
+  .h-chat-log .hm.ponte{align-self:flex-start; background:rgba(167,180,217,0.12); border:1px solid rgba(167,180,217,0.3); font-family:'Newsreader', serif; font-style:italic;}
+  .h-chat-input{display:flex; gap:6px;}
+  .h-chat-input textarea{flex:1; background:var(--ink); border:1px solid var(--line); border-radius:10px; color:var(--cream); font-family:'IBM Plex Sans', sans-serif; font-size:0.82rem; padding:8px; resize:none; min-height:36px;}
+  .h-chat-input button{width:auto; padding:0 14px; border-radius:10px; border:none; background:var(--gold); color:var(--ink); font-size:0.8rem;}
   .empty-hint{font-size:0.85rem; color:var(--muted); font-style:italic; text-align:center; margin-top:20px;}
 </style>
 </head>
@@ -215,6 +226,11 @@
       </div>
 
       <p class="notice" id="notice" hidden></p>
+
+      <div class="notes-panel" id="topicsPanel" hidden>
+        <p class="notes-title">📚 Assuntos anotados</p>
+        <div id="topicsList"></div>
+      </div>
 
       <div class="notes-panel" id="notesPanel" hidden>
         <p class="notes-title">📝 Anotações da reunião</p>
@@ -290,6 +306,24 @@ const askText = document.getElementById('askText');
 const btnAskSend = document.getElementById('btnAskSend');
 const notice = document.getElementById('notice');
 const notesPanel = document.getElementById('notesPanel');
+const topicsPanel = document.getElementById('topicsPanel');
+const topicsList = document.getElementById('topicsList');
+let currentTopic = null; // {title, points: []}
+let topicLog = []; // assuntos já encerrados
+
+function renderTopics(){
+  const all = currentTopic ? [...topicLog, currentTopic] : topicLog;
+  if (!all.length) { topicsPanel.hidden = true; return; }
+  topicsPanel.hidden = false;
+  topicsList.innerHTML = all.map(t =>
+    `<div class="topic-block"><p class="tt">${t.title}</p>${t.points.map(p => `<p class="tp">• ${p}</p>`).join('')}</div>`
+  ).join('');
+}
+function topicsAsText(){
+  const all = currentTopic ? [...topicLog, currentTopic] : topicLog;
+  if (!all.length) return '';
+  return all.map(t => `## ${t.title}\n` + t.points.map(p => '- ' + p).join('\n')).join('\n\n');
+}
 const notesList = document.getElementById('notesList');
 const chatLog = document.getElementById('chatLog');
 const btnFinalizar = document.getElementById('btnFinalizar');
@@ -373,6 +407,7 @@ btnGoScreen2.addEventListener('click', () => {
   translationToggle.hidden = !isTraducao;
   captionBox.hidden = !isTraducao;
   notesPanel.hidden = true;
+  topicsPanel.hidden = true;
   btnFinalizar.hidden = isProfessora;
   btnFinalizar.textContent = isTraducao ? 'Finalizar tradução' : 'Finalizar reunião';
   btnTestVoice.hidden = isTraducao;
@@ -467,6 +502,9 @@ function addMsg(role, text){
   div.innerHTML = `<span class="role">${roleLabel}</span>${text}`;
   chatLog.appendChild(div); chatLog.scrollTop = chatLog.scrollHeight;
   return div;
+}
+function logSilently(role, text){
+  transcriptData.push({who: role==='out'?'you':(role==='in'?'them':'ponte'), original:text, translated:''});
 }
 function addTyping(){
   const div = document.createElement('div');
@@ -580,27 +618,49 @@ async function processQueue(){
   processingQueue = true;
   while (meetingQueue.length && meetingMode && !busy && !listeningForCommand){
     const text = meetingQueue.shift();
+
+    if (meetingMode === 'silent'){
+      setOrbState('yellow', 'Organizando por assunto…');
+      try {
+        const recentPoints = currentTopic ? currentTopic.points.slice(-5).map(p => '- ' + p).join('\n') : '';
+        const prompt = `Você é Ponte, secretária de Melina, acompanhando uma aula/reunião em ${LANGS[targetLang]} e organizando anotações por assunto, não frase por frase.\n\n${currentTopic ? `Assunto em andamento: "${currentTopic.title}"\nÚltimos pontos já anotados nesse assunto:\n${recentPoints}` : 'Ainda não há assunto em andamento — este é o primeiro trecho.'}\n\nTrecho ouvido agora: """${text}"""\n\nDecida se isso continua o MESMO assunto ou se o assunto mudou. Capture a ideia central do trecho de forma clara e completa (não é tradução literal palavra por palavra, é a ideia).\n\nResponda SOMENTE com JSON: {"mesmo_assunto": true|false, "titulo_assunto": "título curto e claro do assunto", "ponto": "o ponto principal dito, em português, de forma completa e informativa", "nota": "compromisso/data/tarefa relevante SE houver, senão vazio", "nota_tipo": "compromisso"|"tarefa"|""}`;
+        const raw = await callClaude(prompt, {model:'claude-sonnet-5', maxTokens:350});
+        const parsed = parseJson(raw, {mesmo_assunto:true, titulo_assunto: currentTopic?currentTopic.title:'Assunto geral', ponto:text, nota:'', nota_tipo:''});
+
+        if (!currentTopic){
+          currentTopic = { title: parsed.titulo_assunto, points: [parsed.ponto] };
+        } else if (parsed.mesmo_assunto){
+          currentTopic.points.push(parsed.ponto);
+          if (parsed.titulo_assunto) currentTopic.title = parsed.titulo_assunto;
+        } else {
+          topicLog.push(currentTopic);
+          currentTopic = { title: parsed.titulo_assunto, points: [parsed.ponto] };
+        }
+        renderTopics();
+        logSilently('in', parsed.ponto);
+        if (parsed.nota) addNote(parsed.nota, parsed.nota_tipo);
+      } catch(err){ console.error('Ponte — erro no rastreamento de assunto:', err); }
+      if (meetingMode){ const [s,l] = restingState(); setOrbState(s,l); }
+      continue;
+    }
+
     const context = conversationContext(4);
     const prompt = `Ponte, intérprete de Melina, em ${LANGS[targetLang]}. Traduza para português com naturalidade, entendendo o contexto — não palavra por palavra.\n\n${context ? "Contexto:\n"+context+"\n\n":""}Trecho: """${text}"""\n\nJSON apenas: {"translation":"...", "note":"compromisso/data/tarefa relevante, se houver, senão vazio", "note_type":"compromisso"|"tarefa"|""}`;
-    if (meetingMode === 'simultaneous'){
-      captionBox.innerHTML = '<div class="typing-dots"><span></span><span></span><span></span></div>';
-    }
+    captionBox.innerHTML = '<div class="typing-dots"><span></span><span></span><span></span></div>';
     setOrbState('yellow', 'Traduzindo…');
     try {
       const raw = await callClaude(prompt, {model:'claude-haiku-4-5-20251001', maxTokens:200});
       const parsed = parseJson(raw, {translation:raw, note:'', note_type:''});
       addMsg('in', parsed.translation);
       if (parsed.note) addNote(parsed.note, parsed.note_type);
-      if (meetingMode === 'simultaneous'){
-        captionBox.textContent = parsed.translation;
-        if (translationOutput === 'voz'){
-          setOrbState('green', 'Traduzindo ao vivo');
-          await new Promise(res => speakText(parsed.translation, SOURCE_LANG, res));
-        }
+      captionBox.textContent = parsed.translation;
+      if (translationOutput === 'voz'){
+        setOrbState('green', 'Traduzindo ao vivo');
+        await new Promise(res => speakText(parsed.translation, SOURCE_LANG, res));
       }
     } catch(err){
       console.error('Ponte — erro na fila de tradução:', err);
-      if (meetingMode === 'simultaneous') captionBox.textContent = '';
+      captionBox.textContent = '';
     }
     if (meetingMode){ const [s,l] = restingState(); setOrbState(s,l); }
   }
@@ -750,10 +810,13 @@ btnFinalizar.addEventListener('click', async () => {
   setOrbState('yellow', 'Preparando resumo final…');
   try {
     const context = conversationContext(80);
+    const topics = topicsAsText();
     const prompt = isTraducao
       ? `Você é Ponte, tradutora simultânea de Melina. A sessão de tradução terminou. Com base no histórico abaixo, escreva um resumo bem estruturado em português dos principais pontos e aprendizados do que foi traduzido — não é uma ata de reunião de negócios, é um resumo de conteúdo (aula, palestra, sermão, etc.).\n\n${context || '(sem conteúdo registrado)'}${notesContext()}`
-      : `Você é Ponte, intérprete de Melina. A reunião terminou. Com base no histórico abaixo, escreva um resumo executivo bem estruturado em português: tópicos discutidos, decisões e próximos passos.\n\n${context || '(sem conteúdo registrado)'}${notesContext()}`;
-    const summary = await callClaude(prompt);
+      : topics
+        ? `Você é Ponte, secretária de Melina. A sessão terminou. Abaixo estão os assuntos já organizados em tópicos, cada um com os pontos anotados ao longo da fala. Escreva um resumo PROFUNDO em português, organizado por assunto (use os mesmos títulos) — para cada assunto, desenvolva e explique o conteúdo de forma completa e conectada, como material de estudo, não apenas repita os pontos soltos em lista.\n\n${topics}${notesContext()}${context ? "\n\nTrocas diretas com Melina durante a sessão (comandos e respostas), para contexto adicional:\n"+context : ''}`
+        : `Você é Ponte, intérprete de Melina. A reunião terminou. Com base no histórico abaixo, escreva um resumo executivo bem estruturado em português: tópicos discutidos, decisões e próximos passos.\n\n${context || '(sem conteúdo registrado)'}${notesContext()}`;
+    const summary = await callClaude(prompt, {maxTokens:1500});
 
     const name = meetingName.value.trim() || (isTraducao ? 'Tradução sem nome' : 'Reunião sem nome');
     const date = meetingDate.value || new Date().toISOString().slice(0,10);
@@ -762,7 +825,7 @@ btnFinalizar.addEventListener('click', async () => {
     const summaryUrl = pdfLink(summaryBlob);
     const notesUrl = pdfLink(notesBlob);
 
-    meetingHistory.unshift({ name, date, summary, notes: notesData.slice() });
+    meetingHistory.unshift({ name, date, summary, notes: notesData.slice(), topics: (currentTopic ? [...topicLog, currentTopic] : topicLog).slice() });
     localStorage.setItem('ponte_history', JSON.stringify(meetingHistory));
 
     btnFinalizar.textContent = isTraducao ? '✓ Tradução finalizada' : '✓ Reunião finalizada';
@@ -780,6 +843,7 @@ btnFinalizar.addEventListener('click', async () => {
 
     function resetSession(){
       transcriptData=[]; notesData=[]; chatLog.innerHTML=''; notesList.innerHTML=''; notesPanel.hidden=true;
+      currentTopic=null; topicLog=[]; topicsList.innerHTML=''; topicsPanel.hidden=true;
       wrapupCard.hidden=true; wrapupCard.innerHTML=''; meetingName.value=''; meetingDate.valueAsDate=new Date();
       btnFinalizar.disabled = false; btnFinalizar.textContent = isTraducao ? 'Finalizar tradução' : 'Finalizar reunião';
       captionBox.textContent = '';
@@ -806,6 +870,11 @@ btnFinalizar.addEventListener('click', async () => {
 });
 
 /* ---------- Screen 3 — Histórico ---------- */
+function formatTopics(topics){
+  if (!topics || !topics.length) return '';
+  return topics.map(t => `## ${t.title}\n` + t.points.map(p=>'- '+p).join('\n')).join('\n\n');
+}
+
 function renderHistory(){
   if (!meetingHistory.length){ historyList.innerHTML = '<p class="empty-hint">Nenhuma reunião finalizada ainda.</p>'; return; }
   historyList.innerHTML = '';
@@ -820,8 +889,16 @@ function renderHistory(){
         <button data-a="resumo">📄 Resumo</button>
         <button data-a="anotacoes">📝 Anotações</button>
         <button data-a="agenda">📅 Agendamento</button>
+        <button data-a="perguntar">💬 Perguntar</button>
       </div>
-      <div class="h-agenda" id="agenda-${idx}" hidden></div>`;
+      <div class="h-agenda" id="agenda-${idx}" hidden></div>
+      <div class="h-chat" id="hchat-${idx}" hidden>
+        <div class="h-chat-log" id="hchatlog-${idx}"></div>
+        <div class="h-chat-input">
+          <textarea id="hchatinput-${idx}" rows="1" placeholder="Pergunte sobre esta sessão, ou aponte algo pra corrigir no resumo..."></textarea>
+          <button id="hchatsend-${idx}">Enviar</button>
+        </div>
+      </div>`;
     div.querySelector('[data-a="resumo"]').addEventListener('click', () => {
       const url = pdfLink(makePdf(m.name + ' — Resumo', m.summary));
       window.open(url, '_blank');
@@ -835,6 +912,54 @@ function renderHistory(){
       box.hidden = !box.hidden;
       if (!box.hidden) box.textContent = compromissos.length ? compromissos.map(c=>'📅 '+c.text).join(' · ') : 'Nenhum compromisso anotado nesta reunião.';
     });
+    div.querySelector('[data-a="perguntar"]').addEventListener('click', () => {
+      const box = document.getElementById('hchat-'+idx);
+      box.hidden = !box.hidden;
+    });
+
+    const sendBtn = div.querySelector(`#hchatsend-${idx}`);
+    const input = div.querySelector(`#hchatinput-${idx}`);
+    const log = div.querySelector(`#hchatlog-${idx}`);
+    async function ask(){
+      const q = input.value.trim();
+      if (!q) return;
+      input.value = ''; sendBtn.disabled = true; input.disabled = true;
+      const qDiv = document.createElement('div'); qDiv.className='hm you'; qDiv.textContent = q;
+      log.appendChild(qDiv);
+      const typingDiv = document.createElement('div'); typingDiv.className='hm ponte';
+      typingDiv.innerHTML = '<div class="typing-dots"><span></span><span></span><span></span></div>';
+      log.appendChild(typingDiv); log.scrollTop = log.scrollHeight;
+      try {
+        const topicsText = formatTopics(m.topics);
+        const notesText = notesAsText(m.notes||[]);
+        const prompt = `Você é Ponte. Você acompanhou esta sessão ("${m.name}", ${m.date}) e tem registrado:\n\n${topicsText ? "Assuntos e pontos anotados:\n"+topicsText+"\n\n" : ""}Resumo já escrito:\n${m.summary}\n\n${notesText ? "Anotações/compromissos:\n"+notesText+"\n\n" : ""}Agora, depois do fato, Melina pergunta ou comenta: "${q}"\n\nDecida: ela está só fazendo uma pergunta sobre o conteúdo, ou está apontando algo errado/faltando que deveria corrigir o resumo? Responda SOMENTE com JSON: {"action":"answer"|"update_summary", "answer":"resposta direta em português para Melina", "updated_summary":"o resumo INTEIRO já revisado e completo, incorporando a correção, SE action=update_summary — senão deixe vazio"}`;
+        const raw = await callClaude(prompt, {maxTokens:1200});
+        const parsed = parseJson(raw, {action:'answer', answer:raw, updated_summary:''});
+        typingDiv.remove();
+        if (parsed.action === 'update_summary' && parsed.updated_summary){
+          m.summary = parsed.updated_summary;
+          localStorage.setItem('ponte_history', JSON.stringify(meetingHistory));
+          const aDiv = document.createElement('div'); aDiv.className='hm ponte';
+          aDiv.textContent = (parsed.answer || 'Atualizei o resumo com essa informação.') + ' ✓ Resumo atualizado.';
+          log.appendChild(aDiv);
+        } else {
+          const aDiv = document.createElement('div'); aDiv.className='hm ponte';
+          aDiv.textContent = parsed.answer || raw;
+          log.appendChild(aDiv);
+        }
+      } catch(err){
+        typingDiv.remove();
+        console.error('Ponte — erro ao perguntar sobre sessão:', err);
+        const eDiv = document.createElement('div'); eDiv.className='hm ponte';
+        eDiv.textContent = 'Não consegui responder agora: ' + (err && err.message ? err.message : 'erro desconhecido');
+        log.appendChild(eDiv);
+      }
+      log.scrollTop = log.scrollHeight;
+      sendBtn.disabled = false; input.disabled = false;
+    }
+    sendBtn.addEventListener('click', ask);
+    input.addEventListener('keydown', (e) => { if (e.key==='Enter' && !e.shiftKey){ e.preventDefault(); ask(); } });
+
     historyList.appendChild(div);
   });
 }
