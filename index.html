@@ -146,6 +146,9 @@
   .history-item .h-name{font-family:'Newsreader', serif; font-style:italic; font-size:1.05rem; color:var(--cream); margin:0 0 2px;}
   .history-item .h-date{font-family:'IBM Plex Mono', monospace; font-size:0.68rem; color:var(--muted); margin:0 0 10px;}
   .h-icons{display:flex; gap:8px;}
+  .h-top{display:flex; justify-content:space-between; align-items:flex-start; gap:8px; margin-bottom:8px;}
+  .h-delete{width:auto; flex:none; background:transparent; border:1px solid var(--line); color:var(--muted); font-size:0.85rem; padding:6px 9px; border-radius:10px; cursor:pointer;}
+  .h-delete:hover{border-color:var(--red-dim); color:var(--red);}
   .h-icons button{flex:1; padding:8px 4px; font-size:0.72rem; border-radius:10px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;}
   .h-icons button:hover{border-color:var(--gold); color:var(--gold);}
   .h-agenda{margin-top:10px; font-size:0.8rem; color:var(--cream); background:rgba(201,154,91,0.06); border-radius:10px; padding:8px 10px;}
@@ -551,11 +554,82 @@ function conversationContext(limit){
 function makePdf(title, bodyText){
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
-  doc.setFont('helvetica','bold'); doc.setFontSize(15);
-  doc.text(title, 15, 20);
-  doc.setFont('helvetica','normal'); doc.setFontSize(11);
-  const lines = doc.splitTextToSize(bodyText || '(sem conteúdo)', 180);
-  doc.text(lines, 15, 32);
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const marginX = 18;
+  const marginTop = 20;
+  const marginBottom = 20;
+  const maxWidth = pageWidth - marginX * 2;
+  let y = marginTop;
+
+  function ensureSpace(neededHeight){
+    if (y + neededHeight > pageHeight - marginBottom){
+      doc.addPage();
+      y = marginTop;
+    }
+  }
+  function clean(s){ return (s || '').replace(/\*\*/g, '').trim(); }
+
+  doc.setFont('helvetica','bold'); doc.setFontSize(16);
+  const titleLines = doc.splitTextToSize(title, maxWidth);
+  ensureSpace(titleLines.length * 7 + 10);
+  doc.text(titleLines, marginX, y);
+  y += titleLines.length * 7 + 10;
+
+  const rawLines = (bodyText || '(sem conteúdo)').split('\n');
+
+  const topicTitles = rawLines
+    .map(l => clean(l))
+    .filter(l => l.startsWith('## ') || l.startsWith('# '))
+    .map(l => l.replace(/^#+\s*/, ''));
+  if (topicTitles.length > 1){
+    doc.setFont('helvetica','bold'); doc.setFontSize(11);
+    ensureSpace(8);
+    doc.text('Assuntos desta sessão:', marginX, y);
+    y += 6;
+    doc.setFont('helvetica','normal'); doc.setFontSize(10);
+    doc.setTextColor(90);
+    topicTitles.forEach(t => {
+      const iLines = doc.splitTextToSize('• ' + t, maxWidth);
+      ensureSpace(iLines.length * 5);
+      doc.text(iLines, marginX, y);
+      y += iLines.length * 5;
+    });
+    doc.setTextColor(0);
+    y += 8;
+  }
+
+  for (const raw of rawLines){
+    const line = clean(raw);
+    if (!line){ y += 3; continue; }
+
+    if (line.startsWith('## ') || line.startsWith('# ')){
+      const headingText = line.replace(/^#+\s*/, '');
+      doc.setFont('helvetica','bold'); doc.setFontSize(13);
+      const hLines = doc.splitTextToSize(headingText, maxWidth);
+      ensureSpace(hLines.length * 6 + 10);
+      y += 5;
+      doc.text(hLines, marginX, y);
+      y += hLines.length * 6 + 4;
+      doc.setDrawColor(200); doc.line(marginX, y - 2, pageWidth - marginX, y - 2);
+      y += 3;
+    } else if (line.startsWith('- ') || line.startsWith('• ')){
+      const bulletText = line.replace(/^[-•]\s*/, '');
+      doc.setFont('helvetica','normal'); doc.setFontSize(11);
+      const bLines = doc.splitTextToSize(bulletText, maxWidth - 6);
+      ensureSpace(bLines.length * 5.6 + 3);
+      doc.text('•', marginX, y);
+      doc.text(bLines, marginX + 5, y);
+      y += bLines.length * 5.6 + 3;
+    } else {
+      doc.setFont('helvetica','normal'); doc.setFontSize(11);
+      const pLines = doc.splitTextToSize(line, maxWidth);
+      ensureSpace(pLines.length * 5.6 + 5);
+      doc.text(pLines, marginX, y);
+      y += pLines.length * 5.6 + 5;
+    }
+  }
+
   return doc.output('blob');
 }
 function pdfLink(blob){ return URL.createObjectURL(blob); }
@@ -830,7 +904,7 @@ btnFinalizar.addEventListener('click', async () => {
     const prompt = isTraducao
       ? `Você é Ponte, tradutora simultânea de Melina. A sessão de tradução terminou. Com base no histórico abaixo, escreva um resumo bem estruturado em português dos principais pontos e aprendizados do que foi traduzido — não é uma ata de reunião de negócios, é um resumo de conteúdo (aula, palestra, sermão, etc.).\n\n${context || '(sem conteúdo registrado)'}${notesContext()}`
       : topics
-        ? `Você é Ponte, secretária de Melina. A sessão terminou. Abaixo estão os assuntos já organizados em tópicos, cada um com os pontos anotados ao longo da fala. Escreva um resumo PROFUNDO em português, organizado por assunto (use os mesmos títulos como subtítulos) — para CADA assunto listado, sem pular nenhum, desenvolva um ou mais parágrafos explicando o conteúdo de forma completa e conectada, como material de estudo — não apenas repita os pontos soltos em lista. Não resuma demais: o objetivo é profundidade, não brevidade.\n\n${topics}${notesContext()}${context ? "\n\nTrocas diretas com Melina durante a sessão (comandos e respostas), para contexto adicional:\n"+context : ''}`
+        ? `Você é Ponte, secretária de Melina. A sessão terminou. Abaixo estão os assuntos já organizados em tópicos, cada um com os pontos anotados ao longo da fala. Escreva um resumo PROFUNDO em português, organizado por assunto — para CADA assunto listado, sem pular nenhum, desenvolva um ou mais parágrafos explicando o conteúdo de forma completa e conectada, como material de estudo — não apenas repita os pontos soltos em lista. Não resuma demais: o objetivo é profundidade, não brevidade.\n\nFormatação obrigatória: comece cada assunto com uma linha "## Título do assunto" (use os mesmos títulos de antes), seguida dos parágrafos explicativos daquele assunto. Não use listas com marcadores no resumo — escreva em parágrafos corridos e bem escritos.\n\n${topics}${notesContext()}${context ? "\n\nTrocas diretas com Melina durante a sessão (comandos e respostas), para contexto adicional:\n"+context : ''}`
         : `Você é Ponte, intérprete de Melina. A reunião terminou. Com base no histórico abaixo, escreva um resumo executivo bem estruturado em português: tópicos discutidos, decisões e próximos passos.\n\n${context || '(sem conteúdo registrado)'}${notesContext()}`;
     const summary = await callClaude(prompt, {maxTokens:4000});
 
@@ -902,8 +976,13 @@ function renderHistory(){
     div.className = 'history-item';
     const compromissos = (m.notes||[]).filter(n => n.type==='compromisso');
     div.innerHTML = `
-      <p class="h-name">${m.name}</p>
-      <p class="h-date">${m.date}</p>
+      <div class="h-top">
+        <div>
+          <p class="h-name">${m.name}</p>
+          <p class="h-date">${m.date}</p>
+        </div>
+        <button class="h-delete" data-a="excluir" title="Excluir sessão">🗑️</button>
+      </div>
       <div class="h-icons">
         <button data-a="resumo">📄 Resumo</button>
         <button data-a="anotacoes">📝 Anotações</button>
@@ -918,6 +997,12 @@ function renderHistory(){
           <button id="hchatsend-${idx}">Enviar</button>
         </div>
       </div>`;
+    div.querySelector('[data-a="excluir"]').addEventListener('click', () => {
+      if (!confirm(`Apagar "${m.name}" do histórico? Essa ação não pode ser desfeita.`)) return;
+      meetingHistory.splice(idx, 1);
+      localStorage.setItem('ponte_history', JSON.stringify(meetingHistory));
+      renderHistory();
+    });
     div.querySelector('[data-a="resumo"]').addEventListener('click', () => {
       const url = pdfLink(makePdf(m.name + ' — Resumo', m.summary));
       window.open(url, '_blank');
