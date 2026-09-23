@@ -620,25 +620,32 @@ async function processQueue(){
     const text = meetingQueue.shift();
 
     if (meetingMode === 'silent'){
-      setOrbState('yellow', 'Organizando por assunto…');
+      setOrbState('yellow', 'Avaliando o que foi dito…');
       try {
         const recentPoints = currentTopic ? currentTopic.points.slice(-5).map(p => '- ' + p).join('\n') : '';
-        const prompt = `Você é Ponte, secretária de Melina, acompanhando uma aula/reunião em ${LANGS[targetLang]} e organizando anotações por assunto, não frase por frase.\n\n${currentTopic ? `Assunto em andamento: "${currentTopic.title}"\nÚltimos pontos já anotados nesse assunto:\n${recentPoints}` : 'Ainda não há assunto em andamento — este é o primeiro trecho.'}\n\nTrecho ouvido agora: """${text}"""\n\nDecida se isso continua o MESMO assunto ou se o assunto mudou. Capture a ideia central do trecho de forma clara e completa (não é tradução literal palavra por palavra, é a ideia).\n\nResponda SOMENTE com JSON: {"mesmo_assunto": true|false, "titulo_assunto": "título curto e claro do assunto", "ponto": "o ponto principal dito, em português, de forma completa e informativa", "nota": "compromisso/data/tarefa relevante SE houver, senão vazio", "nota_tipo": "compromisso"|"tarefa"|""}`;
+        const prompt = `Você é Ponte, secretária de Melina, acompanhando uma aula/reunião em ${LANGS[targetLang]}. Seu trabalho NÃO é transcrever ou traduzir tudo — é agir como uma boa aluna/secretária, filtrando o que realmente vale a pena reter, e ignorando saudações, transições, comentários soltos, repetições ou falas sem conteúdo substancial.\n\n${currentTopic ? `Assunto em andamento: "${currentTopic.title}"\nÚltimos pontos já anotados nesse assunto:\n${recentPoints}` : 'Ainda não há assunto em andamento — este é o primeiro trecho.'}\n\nTrecho ouvido agora: """${text}"""\n\nPrimeiro decida se este trecho contém algo que realmente vale a pena anotar como aprendizado (um conceito, uma explicação, um dado, uma conclusão) — marque "relevante":false para qualquer coisa que seja só enrolação, transição, saudação ou repetição do que já foi dito. Só se for relevante, decida também se continua o MESMO assunto ou se mudou, e escreva o ponto principal de forma clara e completa (a ideia, não a frase literal).\n\nResponda SOMENTE com JSON: {"relevante": true|false, "mesmo_assunto": true|false, "titulo_assunto": "título curto e claro do assunto", "ponto": "o ponto principal, em português, de forma completa e informativa (vazio se relevante=false)", "nota": "compromisso/data/tarefa relevante SE houver, senão vazio — isso vale mesmo se relevante=false", "nota_tipo": "compromisso"|"tarefa"|""}`;
         const raw = await callClaude(prompt, {model:'claude-sonnet-5', maxTokens:350});
-        const parsed = parseJson(raw, {mesmo_assunto:true, titulo_assunto: currentTopic?currentTopic.title:'Assunto geral', ponto:text, nota:'', nota_tipo:''});
+        const parsed = parseJson(raw, {relevante:true, mesmo_assunto:true, titulo_assunto: currentTopic?currentTopic.title:'Assunto geral', ponto:text, nota:'', nota_tipo:''});
 
-        if (!currentTopic){
-          currentTopic = { title: parsed.titulo_assunto, points: [parsed.ponto] };
-        } else if (parsed.mesmo_assunto){
-          currentTopic.points.push(parsed.ponto);
-          if (parsed.titulo_assunto) currentTopic.title = parsed.titulo_assunto;
-        } else {
-          topicLog.push(currentTopic);
-          currentTopic = { title: parsed.titulo_assunto, points: [parsed.ponto] };
-        }
-        renderTopics();
-        logSilently('in', parsed.ponto);
         if (parsed.nota) addNote(parsed.nota, parsed.nota_tipo);
+
+        if (parsed.relevante && parsed.ponto){
+          let isNewTopic = false;
+          if (!currentTopic){
+            currentTopic = { title: parsed.titulo_assunto, points: [parsed.ponto] };
+            isNewTopic = true;
+          } else if (parsed.mesmo_assunto){
+            currentTopic.points.push(parsed.ponto);
+            if (parsed.titulo_assunto) currentTopic.title = parsed.titulo_assunto;
+          } else {
+            topicLog.push(currentTopic);
+            currentTopic = { title: parsed.titulo_assunto, points: [parsed.ponto] };
+            isNewTopic = true;
+          }
+          renderTopics();
+          if (isNewTopic) addMsg('ponte', `📚 Entendi que agora estamos falando sobre "${currentTopic.title}" — vou anotar os pontos importantes.`);
+          addMsg('ponte', `📝 ${parsed.ponto}`);
+        }
       } catch(err){ console.error('Ponte — erro no rastreamento de assunto:', err); }
       if (meetingMode){ const [s,l] = restingState(); setOrbState(s,l); }
       continue;
