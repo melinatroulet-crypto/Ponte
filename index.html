@@ -623,7 +623,7 @@ async function processQueue(){
       setOrbState('yellow', 'Avaliando o que foi dito…');
       try {
         const recentPoints = currentTopic ? currentTopic.points.slice(-5).map(p => '- ' + p).join('\n') : '';
-        const prompt = `Você é Ponte, secretária de Melina, acompanhando uma aula/reunião em ${LANGS[targetLang]}. Seu trabalho NÃO é transcrever ou traduzir tudo — é agir como uma boa aluna/secretária, filtrando o que realmente vale a pena reter, e ignorando saudações, transições, comentários soltos, repetições ou falas sem conteúdo substancial.\n\n${currentTopic ? `Assunto em andamento: "${currentTopic.title}"\nÚltimos pontos já anotados nesse assunto:\n${recentPoints}` : 'Ainda não há assunto em andamento — este é o primeiro trecho.'}\n\nTrecho ouvido agora: """${text}"""\n\nPrimeiro decida se este trecho contém algo que realmente vale a pena anotar como aprendizado (um conceito, uma explicação, um dado, uma conclusão) — marque "relevante":false para qualquer coisa que seja só enrolação, transição, saudação ou repetição do que já foi dito. Só se for relevante, decida também se continua o MESMO assunto ou se mudou, e escreva o ponto principal de forma clara e completa (a ideia, não a frase literal).\n\nResponda SOMENTE com JSON: {"relevante": true|false, "mesmo_assunto": true|false, "titulo_assunto": "título curto e claro do assunto", "ponto": "o ponto principal, em português, de forma completa e informativa (vazio se relevante=false)", "nota": "compromisso/data/tarefa relevante SE houver, senão vazio — isso vale mesmo se relevante=false", "nota_tipo": "compromisso"|"tarefa"|""}`;
+        const prompt = `Você é Ponte, secretária de Melina, acompanhando uma aula/reunião em ${LANGS[targetLang]}. Seu trabalho NÃO é transcrever ou traduzir tudo — é agir como uma boa aluna/secretária, filtrando o que realmente vale a pena reter, e ignorando saudações, transições, comentários soltos, repetições ou falas sem conteúdo substancial.\n\nIMPORTANTE: mesmo o áudio sendo em ${LANGS[targetLang]}, TUDO que você escrever (título do assunto e ponto) deve estar em português. Nunca escreva em ${LANGS[targetLang]}.\n\n${currentTopic ? `Assunto em andamento: "${currentTopic.title}"\nÚltimos pontos já anotados nesse assunto:\n${recentPoints}` : 'Ainda não há assunto em andamento — este é o primeiro trecho.'}\n\nTrecho ouvido agora: """${text}"""\n\nPrimeiro decida se este trecho contém algo que realmente vale a pena anotar como aprendizado (um conceito, uma explicação, um dado, uma conclusão) — marque "relevante":false para qualquer coisa que seja só enrolação, transição, saudação ou repetição do que já foi dito. Só se for relevante, decida também se continua o MESMO assunto ou se mudou, e escreva o ponto principal de forma clara e completa (a ideia, não a frase literal).\n\nResponda SOMENTE com JSON: {"relevante": true|false, "mesmo_assunto": true|false, "titulo_assunto": "título curto e claro do assunto, SEMPRE EM PORTUGUÊS", "ponto": "o ponto principal, SEMPRE EM PORTUGUÊS, de forma completa e informativa (vazio se relevante=false)", "nota": "compromisso/data/tarefa relevante SE houver, senão vazio — isso vale mesmo se relevante=false", "nota_tipo": "compromisso"|"tarefa"|""}`;
         const raw = await callClaude(prompt, {model:'claude-sonnet-5', maxTokens:350});
         const parsed = parseJson(raw, {relevante:true, mesmo_assunto:true, titulo_assunto: currentTopic?currentTopic.title:'Assunto geral', ponto:text, nota:'', nota_tipo:''});
 
@@ -821,14 +821,17 @@ btnFinalizar.addEventListener('click', async () => {
     const prompt = isTraducao
       ? `Você é Ponte, tradutora simultânea de Melina. A sessão de tradução terminou. Com base no histórico abaixo, escreva um resumo bem estruturado em português dos principais pontos e aprendizados do que foi traduzido — não é uma ata de reunião de negócios, é um resumo de conteúdo (aula, palestra, sermão, etc.).\n\n${context || '(sem conteúdo registrado)'}${notesContext()}`
       : topics
-        ? `Você é Ponte, secretária de Melina. A sessão terminou. Abaixo estão os assuntos já organizados em tópicos, cada um com os pontos anotados ao longo da fala. Escreva um resumo PROFUNDO em português, organizado por assunto (use os mesmos títulos) — para cada assunto, desenvolva e explique o conteúdo de forma completa e conectada, como material de estudo, não apenas repita os pontos soltos em lista.\n\n${topics}${notesContext()}${context ? "\n\nTrocas diretas com Melina durante a sessão (comandos e respostas), para contexto adicional:\n"+context : ''}`
+        ? `Você é Ponte, secretária de Melina. A sessão terminou. Abaixo estão os assuntos já organizados em tópicos, cada um com os pontos anotados ao longo da fala. Escreva um resumo PROFUNDO em português, organizado por assunto (use os mesmos títulos como subtítulos) — para CADA assunto listado, sem pular nenhum, desenvolva um ou mais parágrafos explicando o conteúdo de forma completa e conectada, como material de estudo — não apenas repita os pontos soltos em lista. Não resuma demais: o objetivo é profundidade, não brevidade.\n\n${topics}${notesContext()}${context ? "\n\nTrocas diretas com Melina durante a sessão (comandos e respostas), para contexto adicional:\n"+context : ''}`
         : `Você é Ponte, intérprete de Melina. A reunião terminou. Com base no histórico abaixo, escreva um resumo executivo bem estruturado em português: tópicos discutidos, decisões e próximos passos.\n\n${context || '(sem conteúdo registrado)'}${notesContext()}`;
-    const summary = await callClaude(prompt, {maxTokens:1500});
+    const summary = await callClaude(prompt, {maxTokens:4000});
 
     const name = meetingName.value.trim() || (isTraducao ? 'Tradução sem nome' : 'Reunião sem nome');
     const date = meetingDate.value || new Date().toISOString().slice(0,10);
     const summaryBlob = makePdf(name + ' — Resumo', summary);
-    const notesBlob = makePdf(name + ' — Anotações', notesAsText(notesData));
+    const detailedNotes = (!isTraducao && topics)
+      ? topics + (notesData.length ? "\n\nCompromissos e tarefas:\n" + notesAsText(notesData) : '')
+      : notesAsText(notesData);
+    const notesBlob = makePdf(name + ' — Anotações', detailedNotes);
     const summaryUrl = pdfLink(summaryBlob);
     const notesUrl = pdfLink(notesBlob);
 
@@ -911,7 +914,11 @@ function renderHistory(){
       window.open(url, '_blank');
     });
     div.querySelector('[data-a="anotacoes"]').addEventListener('click', () => {
-      const url = pdfLink(makePdf(m.name + ' — Anotações', notesAsText(m.notes||[])));
+      const topicsText = formatTopics(m.topics);
+      const content = topicsText
+        ? topicsText + ((m.notes||[]).length ? "\n\nCompromissos e tarefas:\n" + notesAsText(m.notes) : '')
+        : notesAsText(m.notes||[]);
+      const url = pdfLink(makePdf(m.name + ' — Anotações', content));
       window.open(url, '_blank');
     });
     div.querySelector('[data-a="agenda"]').addEventListener('click', () => {
