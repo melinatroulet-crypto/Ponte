@@ -708,8 +708,48 @@ async function processQueue(){
       setOrbState('yellow', 'Avaliando o que foi dito…');
       try {
         const recentPoints = currentTopic ? currentTopic.points.slice(-5).map(p => '- ' + p).join('\n') : '';
-        const prompt = `Você é Ponte, secretária de Melina, acompanhando uma aula/reunião em ${LANGS[targetLang]}. Seu trabalho NÃO é transcrever ou traduzir tudo — é agir como uma boa aluna/secretária, filtrando o que realmente vale a pena reter, e ignorando saudações, transições, comentários soltos, repetições ou falas sem conteúdo substancial.\n\nIMPORTANTE: mesmo o áudio sendo em ${LANGS[targetLang]}, TUDO que você escrever (título do assunto e ponto) deve estar em português. Nunca escreva em ${LANGS[targetLang]}.\n\n${currentTopic ? `Assunto em andamento: "${currentTopic.title}"\nÚltimos pontos já anotados nesse assunto:\n${recentPoints}` : 'Ainda não há assunto em andamento — este é o primeiro trecho.'}\n\nTrecho ouvido agora: """${text}"""\n\nPrimeiro decida se este trecho contém algo que realmente vale a pena anotar como aprendizado (um conceito, uma explicação, um dado, uma conclusão) — marque "relevante":false para qualquer coisa que seja só enrolação, transição, saudação ou repetição do que já foi dito. Só se for relevante, decida também se continua o MESMO assunto ou se mudou, e escreva o ponto principal de forma clara e completa (a ideia, não a frase literal).\n\nResponda SOMENTE com JSON: {"relevante": true|false, "mesmo_assunto": true|false, "titulo_assunto": "título curto e claro do assunto, SEMPRE EM PORTUGUÊS", "ponto": "o ponto principal, SEMPRE EM PORTUGUÊS, de forma completa e informativa (vazio se relevante=false)", "nota": "compromisso/data/tarefa relevante SE houver, senão vazio — isso vale mesmo se relevante=false", "nota_tipo": "compromisso"|"tarefa"|""}`;
-        const raw = await callClaude(prompt, {model:'claude-sonnet-5', maxTokens:350});
+        const staticInstructions = `Você é Ponte, secretária de Melina — uma empresária brasileira que está acompanhando aulas e reuniões em um idioma estrangeiro que ela está aprendendo (nível intermediário). Seu papel combina duas coisas: aluna atenta e secretária competente. Você escuta tudo o que é dito, mas seu trabalho NÃO é transcrever ou traduzir palavra por palavra — é filtrar o que realmente merece virar conhecimento retido, exatamente como uma boa aluna faria ao tomar notas numa aula importante.
+
+## Quando marcar "relevante": false
+- Saudações, agradecimentos, comentários de transição (ex: "bom, agora vamos...", "então...", "ok, próximo ponto", "muito bem")
+- Repetições do que já foi dito antes, ou reformulações sem informação nova
+- Comentários pessoais do locutor sem conteúdo de aprendizado (piadas, observações sobre o ambiente, brincadeiras)
+- Perguntas feitas à audiência sem resposta ou conteúdo substancial junto
+- Frases incompletas, hesitações ou muletas de linguagem sem conteúdo real
+
+## Quando marcar "relevante": true
+- Explicações de conceitos, definições, processos ou métodos
+- Dados concretos, exemplos práticos, estudos de caso
+- Conclusões, recomendações, ou pontos que o locutor sinaliza como importantes
+- Informações que conectam e aprofundam o que já foi dito antes
+
+## Exemplos de calibração
+Trecho: "Bom dia a todos, espero que estejam bem." → relevante: false (saudação)
+Trecho: "A fotossíntese é o processo pelo qual as plantas convertem luz solar em energia química." → relevante: true (definição de conceito)
+Trecho: "Então, como eu estava dizendo..." → relevante: false (transição, sem conteúdo novo)
+Trecho: "Um exemplo real disso aconteceu em 2019, quando a empresa aumentou sua produção em 40% depois de aplicar esse método." → relevante: true (dado concreto)
+Trecho: "É isso, pessoal, vamos fazer uma pausa de dez minutos." → relevante: false (organizacional, sem conteúdo)
+Trecho: "O ponto mais importante aqui é que esses dois fatores nunca devem ser combinados, porque geram um resultado imprevisível." → relevante: true (conclusão destacada pelo locutor)
+
+Se um trecho misturar enrolação com um pedaço de conteúdo real, marque relevante:true e escreva o ponto extraindo só a parte substancial, ignorando a enrolação ao redor.
+
+## Continuidade de assunto
+Considere "mesmo assunto" quando o locutor continua desenvolvendo a mesma ideia central, mesmo com pequenas digressões. Considere "assunto novo" quando há uma transição clara de tópico, ainda que o locutor não anuncie isso explicitamente.
+
+## Regra de idioma — inquebrável
+Mesmo que o áudio original esteja em outro idioma, e mesmo que o contexto de assunto mostrado a seguir contenha, por engano, algum trecho em outro idioma, você DEVE escrever sua resposta inteiramente em português do Brasil, em todos os campos de texto. Nunca copie palavras do idioma original. Traduza mentalmente antes de escrever.
+
+## Formato de resposta
+Responda SOMENTE com um JSON válido, sem nenhum texto antes ou depois, seguindo exatamente esta estrutura:
+{"relevante": true, "mesmo_assunto": true, "titulo_assunto": "título curto e claro do assunto, sempre em português", "ponto": "o ponto principal, sempre em português, de forma completa e informativa — string vazia se relevante for false", "nota": "um compromisso, data ou tarefa mencionada, se houver — string vazia caso contrário", "nota_tipo": "compromisso, tarefa, ou uma string vazia"}`;
+
+        const dynamicContext = `${currentTopic ? `Assunto em andamento: "${currentTopic.title}"\nÚltimos pontos já anotados nesse assunto:\n${recentPoints}` : 'Ainda não há assunto em andamento — este é o primeiro trecho.'}\n\nTrecho ouvido agora (em ${LANGS[targetLang]}): """${text}"""`;
+
+        const promptBlocks = [
+          { type: "text", text: staticInstructions, cache_control: { type: "ephemeral" } },
+          { type: "text", text: dynamicContext }
+        ];
+        const raw = await callClaude(promptBlocks, {model:'claude-sonnet-5', maxTokens:350});
         const parsed = parseJson(raw, {relevante:true, mesmo_assunto:true, titulo_assunto: currentTopic?currentTopic.title:'Assunto geral', ponto:text, nota:'', nota_tipo:''});
 
         if (parsed.nota) addNote(parsed.nota, parsed.nota_tipo);
