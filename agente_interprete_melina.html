@@ -149,6 +149,10 @@
   .h-top{display:flex; justify-content:space-between; align-items:flex-start; gap:8px; margin-bottom:8px;}
   .h-delete{width:auto; flex:none; background:transparent; border:1px solid var(--line); color:var(--muted); font-size:0.85rem; padding:6px 9px; border-radius:10px; cursor:pointer;}
   .h-delete:hover{border-color:var(--red-dim); color:var(--red);}
+  .h-delete-confirm{display:flex; gap:6px; flex:none;}
+  .h-delete-confirm button{width:auto; flex:none; font-size:0.72rem; padding:6px 10px; border-radius:10px; cursor:pointer;}
+  .h-delete-yes{background:var(--red); border:none; color:#fff;}
+  .h-delete-no{background:transparent; border:1px solid var(--line); color:var(--muted);}
   .h-icons button{flex:1; padding:8px 4px; font-size:0.72rem; border-radius:10px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;}
   .h-icons button:hover{border-color:var(--gold); color:var(--gold);}
   .h-agenda{margin-top:10px; font-size:0.8rem; color:var(--cream); background:rgba(201,154,91,0.06); border-radius:10px; padding:8px 10px;}
@@ -997,11 +1001,18 @@ function renderHistory(){
           <button id="hchatsend-${idx}">Enviar</button>
         </div>
       </div>`;
-    div.querySelector('[data-a="excluir"]').addEventListener('click', () => {
-      if (!confirm(`Apagar "${m.name}" do histórico? Essa ação não pode ser desfeita.`)) return;
-      meetingHistory.splice(idx, 1);
-      localStorage.setItem('ponte_history', JSON.stringify(meetingHistory));
-      renderHistory();
+    const delBtn = div.querySelector('[data-a="excluir"]');
+    delBtn.addEventListener('click', () => {
+      delBtn.outerHTML = `<span class="h-delete-confirm">
+        <button class="h-delete-yes">Apagar</button>
+        <button class="h-delete-no">Cancelar</button>
+      </span>`;
+      div.querySelector('.h-delete-yes').addEventListener('click', () => {
+        meetingHistory.splice(idx, 1);
+        localStorage.setItem('ponte_history', JSON.stringify(meetingHistory));
+        renderHistory();
+      });
+      div.querySelector('.h-delete-no').addEventListener('click', () => renderHistory());
     });
     div.querySelector('[data-a="resumo"]').addEventListener('click', () => {
       const url = pdfLink(makePdf(m.name + ' — Resumo', m.summary));
